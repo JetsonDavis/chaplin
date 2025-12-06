@@ -21,5 +21,5 @@ dst_filename: null
 gpu_idx: 0
 output_subdir: null
 voice_sample_path: null  # path to voice sample WAV file for TTS cloning (optional)
-tts_speaker: "alloy"  # OpenAI TTS voice: alloy, echo, fable, onyx, nova, shimmer
+tts_speaker: "fZg8PU79SvMi75ypVscL"  # Your cloned ElevenLabs voice ID
 camera_index: 0  # camera device index (0=built-in, 1=iPhone via Continuity Camera, etc.)

@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pynput import keyboard
 import asyncio
-from openai import OpenAI
+from elevenlabs import ElevenLabs, VoiceSettings
 import tempfile
 import pygame
 
@@ -37,12 +37,15 @@ class Chaplin:
         # setup keyboard controller for typing
         self.kbd_controller = keyboard.Controller()
 
-        # setup text-to-speech with OpenAI
-        print("\n\033[48;5;94m\033[97m\033[1m SETTING UP OPENAI TTS... \033[0m")
+        # setup text-to-speech with ElevenLabs
+        print("\n\033[48;5;94m\033[97m\033[1m SETTING UP ELEVENLABS TTS... \033[0m")
         
-        # initialize OpenAI client (requires OPENAI_API_KEY env variable)
-        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.tts_speaker = tts_speaker if tts_speaker else "alloy"  # alloy, echo, fable, onyx, nova, shimmer
+        # initialize ElevenLabs client (requires ELEVENLABS_API_KEY env variable)
+        api_key = os.getenv("ELEVENLABS_API_KEY")
+        if not api_key:
+            raise ValueError("ELEVENLABS_API_KEY environment variable not set!")
+        self.elevenlabs_client = ElevenLabs(api_key=api_key)
+        self.tts_speaker = tts_speaker if tts_speaker else "21m00Tcm4TlvDq8ikWAM"  # Rachel voice ID
         
         # initialize pygame mixer for audio playback
         pygame.mixer.init()
@@ -141,7 +144,7 @@ class Chaplin:
         return chat_output.corrected_text
 
     def _speak_text(self, text):
-        """Generate and play speech using OpenAI TTS"""
+        """Generate and play speech using ElevenLabs TTS"""
         try:
             print(f"\n\033[48;5;94m\033[97m\033[1m GENERATING SPEECH \033[0m: \"{text.strip()}\"")
             print(f"\033[93mUsing voice: {self.tts_speaker}\033[0m")
@@ -150,15 +153,23 @@ class Chaplin:
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
                 tmp_path = tmp_file.name
             
-            # generate speech with OpenAI
-            response = self.openai_client.audio.speech.create(
-                model="tts-1",  # or "tts-1-hd" for higher quality
-                voice=self.tts_speaker,
-                input=text
+            # generate speech with ElevenLabs (new API)
+            audio = self.elevenlabs_client.text_to_speech.convert(
+                voice_id=self.tts_speaker,
+                text=text,
+                model_id="eleven_turbo_v2_5",  # fast model
+                voice_settings=VoiceSettings(
+                    stability=0.5,
+                    similarity_boost=0.75,
+                    style=0.0,
+                    use_speaker_boost=True
+                )
             )
             
-            # save to file
-            response.stream_to_file(tmp_path)
+            # save audio to file
+            with open(tmp_path, 'wb') as f:
+                for chunk in audio:
+                    f.write(chunk)
             
             print("\033[48;5;22m\033[97m\033[1m 🔊 PLAYING AUDIO NOW \033[0m")
             

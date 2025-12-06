@@ -11,5 +11,5 @@ torchaudio
 ollama
 pydantic
 pynput
-openai
+elevenlabs
 pygame
