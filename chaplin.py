@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pynput import keyboard
 import asyncio
+import subprocess
 
 
 class ChaplinOutput(BaseModel):
@@ -14,7 +15,7 @@ class ChaplinOutput(BaseModel):
 
 
 class Chaplin:
-    def __init__(self):
+    def __init__(self, voice_sample_path=None, tts_speaker="Claribel Dervla"):
         self.vsr_model = None
 
         # flag to toggle recording
@@ -32,6 +33,10 @@ class Chaplin:
 
         # setup keyboard controller for typing
         self.kbd_controller = keyboard.Controller()
+
+        # setup text-to-speech using macOS say command (instant)
+        self.tts_speaker = tts_speaker if tts_speaker else "Samantha"
+        print(f"\n\033[48;5;22m\033[97m\033[1m TTS READY \033[0m (using macOS voice: {self.tts_speaker})\n")
 
         # setup async ollama client
         self.ollama_client = AsyncClient()
@@ -74,8 +79,9 @@ class Chaplin:
 
     async def correct_output_async(self, output, sequence_num):
         # perform inference on the raw output to get back a "correct" version
+        print("\n\033[48;5;94m\033[97m\033[1m CORRECTING WITH LLM... \033[0m")
         response = await self.ollama_client.chat(
-            model='qwen3:4b',
+            model='qwen2.5:1.5b',
             messages=[
                 {
                     'role': 'system',
@@ -92,6 +98,8 @@ class Chaplin:
         # get only the corrected text
         chat_output = ChaplinOutput.model_validate_json(
             response['message']['content'])
+        
+        print(f"\033[48;5;22m\033[97m\033[1m ✓ LLM CORRECTION COMPLETE \033[0m")
 
         # if last character isn't a sentence ending (happens sometimes), add a period
         chat_output.corrected_text = chat_output.corrected_text.strip()
@@ -107,13 +115,32 @@ class Chaplin:
                 await self.typing_condition.wait()
 
             # this task's turn to type the corrected text
+            print(f"\n\033[48;5;33m\033[97m\033[1m TYPING TEXT \033[0m: \"{chat_output.corrected_text.strip()}\"")
             self.kbd_controller.type(chat_output.corrected_text)
+            print("\033[48;5;22m\033[97m\033[1m ✓ TYPING COMPLETE \033[0m")
+            
+            # speak the corrected text using TTS
+            print("\033[48;5;94m\033[97m\033[1m STARTING TTS... \033[0m")
+            self._speak_text(chat_output.corrected_text)
 
             # increment sequence and notify next task
             self.next_sequence_to_type += 1
             self.typing_condition.notify_all()
 
         return chat_output.corrected_text
+
+    def _speak_text(self, text):
+        """Generate and play speech using macOS say command"""
+        try:
+            print(f"\n\033[48;5;94m\033[97m\033[1m SPEAKING \033[0m: \"{text.strip()}\"")
+            print("\033[48;5;22m\033[97m\033[1m 🔊 PLAYING AUDIO NOW \033[0m")
+            
+            # use macOS say command for instant TTS
+            subprocess.run(['say', '-v', self.tts_speaker, text], check=True)
+            
+            print("\033[48;5;22m\033[97m\033[1m ✓ AUDIO PLAYBACK COMPLETE \033[0m\n")
+        except Exception as e:
+            print(f"\n\033[48;5;196m\033[97m\033[1m TTS ERROR \033[0m: {e}\n")
 
     def perform_inference(self, video_path):
         # perform inference on the video with the vsr model

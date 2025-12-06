@@ -11,3 +11,7 @@ torchaudio
 ollama
 pydantic
 pynput
+numpy >= 1.24.0
+TTS >= 0.22.0
+sounddevice
+soundfile

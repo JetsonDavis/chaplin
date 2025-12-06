@@ -20,3 +20,5 @@ detector: retinaface
 dst_filename: null
 gpu_idx: 0
 output_subdir: null
+voice_sample_path: null  # path to voice sample WAV file for TTS cloning (optional)
+tts_speaker: "Samantha"  # default macOS TTS voice (use 'say -v ?' to see all available voices)
