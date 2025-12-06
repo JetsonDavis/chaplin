@@ -17,8 +17,9 @@ class ChaplinOutput(BaseModel):
 
 
 class Chaplin:
-    def __init__(self, voice_sample_path=None, tts_speaker="Claribel Dervla"):
+    def __init__(self, voice_sample_path=None, tts_speaker="Claribel Dervla", camera_index=0):
         self.vsr_model = None
+        self.camera_index = camera_index
 
         # flag to toggle recording
         self.recording = False
@@ -201,13 +202,18 @@ class Chaplin:
 
     def start_webcam(self):
         # init webcam
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(self.camera_index)
 
-        # set webcam resolution, and get frame dimensions
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640 // self.res_factor)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480 // self.res_factor)
-        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # set webcam resolution to 640x480 for better compatibility
+        # iPhone camera defaults to 1920x1080 which causes issues with video encoding
+        # We'll force resize in the frame processing loop
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        
+        # Use fixed resolution for video writer (frames will be resized to match)
+        frame_width = 640
+        frame_height = 480
+        print(f"\033[93mDEBUG: Video will be saved at {frame_width}x{frame_height}\033[0m")
 
         last_frame_time = time.time()
 
@@ -221,7 +227,7 @@ class Chaplin:
             if key == ord('q'):
                 # remove any remaining videos that were saved to disk
                 for file in os.listdir():
-                    if file.startswith(self.output_prefix) and file.endswith('.mp4'):
+                    if file.startswith(self.output_prefix) and (file.endswith('.mp4') or file.endswith('.avi')):
                         os.remove(file)
                 break
 
@@ -231,6 +237,10 @@ class Chaplin:
             if current_time - last_frame_time >= self.frame_interval:
                 ret, frame = cap.read()
                 if ret:
+                    # resize frame to 640x480 if it's larger (for iPhone camera compatibility)
+                    if frame.shape[1] > 640 or frame.shape[0] > 480:
+                        frame = cv2.resize(frame, (640, 480))
+                    
                     # frame compression
                     encode_param = [
                         int(cv2.IMWRITE_JPEG_QUALITY), self.frame_compression]
@@ -241,14 +251,18 @@ class Chaplin:
                     if self.recording:
                         if out is None:
                             output_path = self.output_prefix + \
-                                str(time.time_ns() // 1_000_000) + '.mp4'
+                                str(time.time_ns() // 1_000_000) + '.avi'
+                            print(f"\033[93mDEBUG: Creating video writer for {output_path} with size {frame_width}x{frame_height}\033[0m")
+                            # Use MJPEG codec in AVI container for maximum compatibility
                             out = cv2.VideoWriter(
                                 output_path,
-                                cv2.VideoWriter_fourcc(*'mp4v'),
+                                cv2.VideoWriter_fourcc(*'MJPG'),
                                 self.fps,
                                 (frame_width, frame_height),
                                 False  # isColor
                             )
+                            if not out.isOpened():
+                                print(f"\033[91mERROR: Failed to open video writer!\033[0m")
 
                         out.write(compressed_frame)
 
@@ -263,19 +277,27 @@ class Chaplin:
                     elif not self.recording and frame_count > 0:
                         if out is not None:
                             out.release()
+                            out = None  # Important: set to None after release
+                        
+                        print(f"\033[93mDEBUG: Recording stopped. Recorded {frame_count} frames (need {self.fps * 2} for 2 seconds)\033[0m")
+                        
+                        # Give the file system a moment to finalize the file
+                        time.sleep(0.1)
 
                         # only run inference if the video is at least 2 seconds long
                         if frame_count >= self.fps * 2:
+                            print(f"\033[93mDEBUG: Starting inference on {output_path}\033[0m")
                             futures.append(self.executor.submit(
                                 self.perform_inference, output_path))
                         else:
+                            print(f"\033[93mDEBUG: Video too short ({frame_count} frames), deleting {output_path}\033[0m")
                             os.remove(output_path)
 
                         output_path = self.output_prefix + \
-                            str(time.time_ns() // 1_000_000) + '.mp4'
+                            str(time.time_ns() // 1_000_000) + '.avi'
                         out = cv2.VideoWriter(
                             output_path,
-                            cv2.VideoWriter_fourcc(*'mp4v'),
+                            cv2.VideoWriter_fourcc(*'MJPG'),
                             self.fps,
                             (frame_width, frame_height),
                             False  # isColor

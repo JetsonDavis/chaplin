@@ -6,8 +6,12 @@ from chaplin import Chaplin
 
 @hydra.main(version_base=None, config_path="hydra_configs", config_name="default")
 def main(cfg):
-    # initialize Chaplin with optional voice sample path and TTS speaker
-    chaplin = Chaplin(voice_sample_path=cfg.voice_sample_path, tts_speaker=cfg.tts_speaker)
+    # initialize Chaplin with optional voice sample path, TTS speaker, and camera index
+    chaplin = Chaplin(
+        voice_sample_path=cfg.voice_sample_path, 
+        tts_speaker=cfg.tts_speaker,
+        camera_index=cfg.camera_index
+    )
 
     # load the model
     chaplin.vsr_model = InferencePipeline(
