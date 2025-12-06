@@ -6,7 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pynput import keyboard
 import asyncio
-import subprocess
+from openai import OpenAI
+import tempfile
+import pygame
 
 
 class ChaplinOutput(BaseModel):
@@ -34,9 +36,17 @@ class Chaplin:
         # setup keyboard controller for typing
         self.kbd_controller = keyboard.Controller()
 
-        # setup text-to-speech using macOS say command (instant)
-        self.tts_speaker = tts_speaker if tts_speaker else "Samantha"
-        print(f"\n\033[48;5;22m\033[97m\033[1m TTS READY \033[0m (using macOS voice: {self.tts_speaker})\n")
+        # setup text-to-speech with OpenAI
+        print("\n\033[48;5;94m\033[97m\033[1m SETTING UP OPENAI TTS... \033[0m")
+        
+        # initialize OpenAI client (requires OPENAI_API_KEY env variable)
+        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.tts_speaker = tts_speaker if tts_speaker else "alloy"  # alloy, echo, fable, onyx, nova, shimmer
+        
+        # initialize pygame mixer for audio playback
+        pygame.mixer.init()
+        
+        print(f"\033[48;5;22m\033[97m\033[1m TTS READY! \033[0m (voice: {self.tts_speaker})\n")
 
         # setup async ollama client
         self.ollama_client = AsyncClient()
@@ -130,15 +140,39 @@ class Chaplin:
         return chat_output.corrected_text
 
     def _speak_text(self, text):
-        """Generate and play speech using macOS say command"""
+        """Generate and play speech using OpenAI TTS"""
         try:
-            print(f"\n\033[48;5;94m\033[97m\033[1m SPEAKING \033[0m: \"{text.strip()}\"")
+            print(f"\n\033[48;5;94m\033[97m\033[1m GENERATING SPEECH \033[0m: \"{text.strip()}\"")
+            print(f"\033[93mUsing voice: {self.tts_speaker}\033[0m")
+            
+            # create temporary file for audio output
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+            
+            # generate speech with OpenAI
+            response = self.openai_client.audio.speech.create(
+                model="tts-1",  # or "tts-1-hd" for higher quality
+                voice=self.tts_speaker,
+                input=text
+            )
+            
+            # save to file
+            response.stream_to_file(tmp_path)
+            
             print("\033[48;5;22m\033[97m\033[1m 🔊 PLAYING AUDIO NOW \033[0m")
             
-            # use macOS say command for instant TTS
-            subprocess.run(['say', '-v', self.tts_speaker, text], check=True)
+            # play the generated audio
+            pygame.mixer.music.load(tmp_path)
+            pygame.mixer.music.play()
+            
+            # wait for playback to finish
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
             
             print("\033[48;5;22m\033[97m\033[1m ✓ AUDIO PLAYBACK COMPLETE \033[0m\n")
+            
+            # cleanup temporary file
+            os.remove(tmp_path)
         except Exception as e:
             print(f"\n\033[48;5;196m\033[97m\033[1m TTS ERROR \033[0m: {e}\n")
 
