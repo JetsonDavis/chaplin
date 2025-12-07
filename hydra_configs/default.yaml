@@ -1,27 +1,25 @@
-# config.yaml
-
-defaults:  
-  - _self_  
-  - override hydra/hydra_logging: disabled  
-  - override hydra/job_logging: disabled  
-hydra:  
-  output_subdir: null  
-  run:  
-    dir: .
-config_filename: null
+camera_index: 0
+config_filename: ./configs/LRS3_V_WER19.1.ini
 data_dir: null
+data_ext: .mp4
 data_filename: null
-data_ext: ".mp4"
-landmarks_dir: null
-landmarks_filename: null
-landmarks_ext: ".pkl"
-labels_filename: null
-detector: retinaface
+defaults:
+- _self_
+- override hydra/hydra_logging: disabled
+- override hydra/job_logging: disabled
+detector: mediapipe
 dst_filename: null
-gpu_idx: 0
+gpu_idx: -1
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+labels_filename: null
+landmarks_dir: null
+landmarks_ext: .pkl
+landmarks_filename: null
+meeting_context: ''
 output_subdir: null
-voice_sample_path: null  # path to voice sample WAV file for TTS cloning (optional)
-tts_speaker: "fZg8PU79SvMi75ypVscL"  # Your cloned ElevenLabs voice ID
-camera_index: 2  # camera device index (0=Camo, 1=OBS Virtual, 2=MacBook Pro built-in)
-meeting_context: ""  # optional context to help LLM corrections (e.g., "discussing quarterly sales figures", "technical presentation about AI")
-persist_vector_db: true  # save vector database to disk (true) or use in-memory only (false)
+persist_vector_db: true
+tts_speaker: QxPbJa2ls7sQqs8Ra8Vz
+voice_sample_path: null

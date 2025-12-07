@@ -997,8 +997,8 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
             }
             
             # Append to JSONL file
-            samples_file = os.path.join(self.training_data_dir, "samples.jsonl")
-            with open(samples_file, "a") as f:
+            samples_file = os.path.join(self.training_data_dir, "training_samples.jsonl")
+            with open(samples_file, "a", encoding='utf-8') as f:
                 f.write(json.dumps(sample) + "\n")
             
             print(f"\033[90mSaved to: {training_video_path}\033[0m")
