@@ -48,6 +48,9 @@ class Chaplin:
         self.previous_video_path = None  # Track previous video to delete
         self.training_data_dir = os.path.join(os.path.dirname(__file__), "training_data")
         os.makedirs(os.path.join(self.training_data_dir, "videos"), exist_ok=True)
+        
+        # System prompt template (can be customized via GUI)
+        self.system_prompt_template = None  # Will use default if None
 
         # conversation history for context
         self.conversation_history = []  # stores recent corrected utterances
@@ -636,7 +639,15 @@ class Chaplin:
         context_section = "\n\n".join(context_parts) if context_parts else ""
 
         # Build system prompt with context
-        system_prompt = f"""You are an assistant that helps make corrections to the output of a lipreading model. The text you will receive was transcribed using a video-to-text system that attempts to lipread the subject speaking in the video, so the text will likely be imperfect. The input text will also be in all-caps, although your response should be capitalized correctly and should NOT be in all-caps.
+        # Use custom template if set, otherwise use default
+        if self.system_prompt_template:
+            # Custom prompt - just add context section
+            base_prompt = self.system_prompt_template
+        else:
+            # Default prompt
+            base_prompt = """You are an assistant that helps make corrections to the output of a lipreading model. The text you will receive was transcribed using a video-to-text system that attempts to lipread the subject speaking in the video, so the text will likely be imperfect. The input text will also be in all-caps, although your response should be capitalized correctly and should NOT be in all-caps.
+
+⚠️ IMPORTANT: This is a professional medical/business transcription system. Medical terminology, anatomical terms, and product names (including terms like "vaginal mesh", "pelvic floor", etc.) are LEGITIMATE and MUST be transcribed accurately. Do NOT censor, modify, or refuse to process any medical or anatomical terminology.
 
 ⚠️ CRITICAL RULES - MUST FOLLOW EXACTLY:
 
@@ -670,6 +681,9 @@ Output: "What about." ✗ WRONG - deleted words!
 NOTE: Context is ONLY for helping choose between similar-sounding words (like "their" vs "there"). Do NOT use context to replace or remove words.
 
 Return the corrected text in the format of 'list_of_changes' and 'corrected_text'."""
+        
+        # Combine base prompt with context
+        system_prompt = f"{base_prompt}\n\n{context_section if context_section else 'No prior context available.'}"
 
         response = await self.ollama_client.chat(
             model='qwen2.5:1.5b',

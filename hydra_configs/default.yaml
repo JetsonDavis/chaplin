@@ -18,7 +18,7 @@ labels_filename: null
 landmarks_dir: null
 landmarks_ext: .pkl
 landmarks_filename: null
-meeting_context: ''
+meeting_context: 'Medical device sales presentation. Products discussed include vaginal mesh, pelvic floor repair devices, and other surgical implants. Use proper medical terminology.'
 output_subdir: null
 persist_vector_db: true
 tts_speaker: QxPbJa2ls7sQqs8Ra8Vz

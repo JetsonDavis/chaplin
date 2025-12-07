@@ -9,7 +9,8 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QTextEdit, QStatusBar, QDialog, QLineEdit,
-    QFileDialog, QMessageBox, QSplitter, QGroupBox
+    QFileDialog, QMessageBox, QSplitter, QGroupBox, QTableWidget,
+    QTableWidgetItem, QHeaderView
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QImage, QPixmap, QFont, QIcon, QKeySequence, QShortcut
@@ -186,7 +187,74 @@ class ContextManagementDialog(QDialog):
         context_tab.setLayout(context_layout)
         tabs.addTab(context_tab, "Meeting Context")
 
-        # Tab 2: Upload Documents
+        # Tab 2: System Prompt
+        prompt_tab = QWidget()
+        prompt_layout = QVBoxLayout()
+
+        prompt_label = QLabel("LLM System Prompt:")
+        prompt_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        prompt_layout.addWidget(prompt_label)
+
+        info_label = QLabel("This prompt instructs the LLM how to correct lip-reading output. Edit carefully.")
+        info_label.setFont(QFont("Arial", 9))
+        info_label.setStyleSheet("color: #666;")
+        prompt_layout.addWidget(info_label)
+
+        self.prompt_text = QTextEdit()
+        self.prompt_text.setFont(QFont("Courier", 10))
+        
+        # Get the current system prompt template from chaplin.py
+        default_prompt = """You are an assistant that helps make corrections to the output of a lipreading model. The text you will receive was transcribed using a video-to-text system that attempts to lipread the subject speaking in the video, so the text will likely be imperfect. The input text will also be in all-caps, although your response should be capitalized correctly and should NOT be in all-caps.
+
+⚠️ IMPORTANT: This is a professional medical/business transcription system. Medical terminology, anatomical terms, and product names (including terms like "vaginal mesh", "pelvic floor", etc.) are LEGITIMATE and MUST be transcribed accurately. Do NOT censor, modify, or refuse to process any medical or anatomical terminology.
+
+⚠️ CRITICAL RULES - MUST FOLLOW EXACTLY:
+
+1. **PRESERVE EVERY SINGLE WORD** - The corrected text MUST have the EXACT SAME NUMBER of words as the input
+2. **ONLY REPLACE WORDS** - You can ONLY change individual words to similar-sounding alternatives
+3. **NEVER DELETE WORDS** - Deleting words is STRICTLY FORBIDDEN
+4. **NEVER ADD WORDS** - Adding words is STRICTLY FORBIDDEN
+5. **KEEP SENTENCE STRUCTURE** - The structure must remain identical
+
+Your ONLY job is to:
+- Fix capitalization (input is ALL-CAPS, output should be normal)
+- Add punctuation (periods, commas, question marks)
+- Replace mistranscribed words with similar-sounding correct words
+
+EXAMPLES OF CORRECT BEHAVIOR:
+Input: "I HAVE READ MANY BOOKS ABOUT THIS SUBJECT"
+Output: "I have read many books about this subject." ✓ (same 8 words)
+
+Input: "THEIR GOING TO THE STORE"
+Output: "They're going to the store." ✓ (same 5 words, fixed "THEIR" → "They're")
+
+EXAMPLES OF FORBIDDEN BEHAVIOR:
+Input: "I HAVE READ MANY BOOKS ABOUT THIS SUBJECT"
+Output: "I had read." ✗ WRONG - deleted 6 words!
+
+Input: "HOW ABOUT A HAMBURGER"
+Output: "What about." ✗ WRONG - deleted words!
+
+NOTE: Context is ONLY for helping choose between similar-sounding words (like "their" vs "there"). Do NOT use context to replace or remove words.
+
+Return the corrected text in the format of 'list_of_changes' and 'corrected_text'."""
+        
+        # Check if chaplin has a custom prompt, otherwise use default
+        if hasattr(self.chaplin, 'system_prompt_template'):
+            self.prompt_text.setText(self.chaplin.system_prompt_template)
+        else:
+            self.prompt_text.setText(default_prompt)
+        
+        prompt_layout.addWidget(self.prompt_text)
+
+        update_prompt_btn = QPushButton("Update System Prompt")
+        update_prompt_btn.clicked.connect(self.update_system_prompt)
+        prompt_layout.addWidget(update_prompt_btn)
+
+        prompt_tab.setLayout(prompt_layout)
+        tabs.addTab(prompt_tab, "System Prompt")
+
+        # Tab 3: Upload Documents
         upload_tab = QWidget()
         upload_layout = QVBoxLayout()
 
@@ -256,6 +324,16 @@ class ContextManagementDialog(QDialog):
         new_context = self.context_text.toPlainText().strip()
         self.chaplin.meeting_context = new_context
         QMessageBox.information(self, "Success", "Meeting context updated!")
+
+    def update_system_prompt(self):
+        """Update the system prompt template"""
+        new_prompt = self.prompt_text.toPlainText().strip()
+        if not new_prompt:
+            QMessageBox.warning(self, "Error", "System prompt cannot be empty!")
+            return
+        
+        self.chaplin.system_prompt_template = new_prompt
+        QMessageBox.information(self, "Success", "System prompt updated!\n\nThis will be used for all future LLM corrections.")
 
     def upload_text_file(self):
         """Upload a text file"""
@@ -599,7 +677,6 @@ class ViewTrainingDataDialog(QDialog):
         layout.addWidget(info_label)
 
         # Training samples list
-        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Timestamp", "Raw Output", "LLM Correction", "Ground Truth", "Correct?"])
