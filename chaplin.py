@@ -10,6 +10,7 @@ from elevenlabs import ElevenLabs, VoiceSettings
 import tempfile
 import pygame
 import numpy as np
+import PyPDF2
 
 
 class ChaplinOutput(BaseModel):
@@ -118,6 +119,264 @@ class Chaplin:
         """Clear the conversation history"""
         self.conversation_history = []
         print("\n\033[96m🗑️  Conversation history cleared\033[0m\n")
+    
+    def context_management_dialog(self):
+        """Open context management dialog for live context updates and document uploads"""
+        # Set flag to prevent interference
+        self.waiting_for_input = True
+        
+        # Temporarily disable recording if it's active
+        was_recording = self.recording
+        if was_recording:
+            self.recording = False
+            print("\033[93mPausing lip-reading recording for context management...\033[0m")
+        
+        print("\n" + "="*70)
+        print("\033[48;5;33m\033[97m\033[1m CONTEXT MANAGEMENT \033[0m")
+        print("="*70)
+        print("\nOptions:")
+        print("  1. Update meeting context (type text)")
+        print("  2. Upload text file (.txt)")
+        print("  3. Upload PDF document (.pdf)")
+        print("  4. View current context")
+        print("  5. Clear context")
+        print("  6. Cancel")
+        print("="*70)
+        
+        context_window = 'Context Management'
+        
+        while True:
+            img = self._create_context_menu_image()
+            cv2.imshow(context_window, img)
+            
+            key = cv2.waitKey(0)
+            
+            if key == ord('1'):
+                # Update context via text input
+                cv2.destroyWindow(context_window)
+                self._input_context_text()
+                break
+            elif key == ord('2'):
+                # Upload text file
+                cv2.destroyWindow(context_window)
+                self._upload_text_file()
+                break
+            elif key == ord('3'):
+                # Upload PDF
+                cv2.destroyWindow(context_window)
+                self._upload_pdf_file()
+                break
+            elif key == ord('4'):
+                # View current context
+                self._display_current_context()
+            elif key == ord('5'):
+                # Clear context
+                self.meeting_context = ""
+                print("\n\033[96m✓ Context cleared\033[0m\n")
+            elif key == 27 or key == ord('6'):  # Esc or option 6
+                print("\033[93mContext management cancelled.\033[0m\n")
+                cv2.destroyWindow(context_window)
+                break
+        
+        # Restore recording state if it was active
+        if was_recording:
+            self.recording = True
+            print("\033[93mResuming lip-reading recording...\033[0m")
+        
+        # Clear the flag
+        self.waiting_for_input = False
+    
+    def _create_context_menu_image(self):
+        """Create menu image for context management"""
+        img = 255 * np.ones((400, 800, 3), dtype=np.uint8)
+        
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(img, 'Context Management', (20, 40), font, 1.3, (0, 0, 0), 2)
+        
+        # Menu options
+        y_pos = 100
+        options = [
+            "1. Update meeting context (type text)",
+            "2. Upload text file (.txt)",
+            "3. Upload PDF document (.pdf)",
+            "4. View current context",
+            "5. Clear context",
+            "6. Cancel (or press Esc)"
+        ]
+        
+        for option in options:
+            cv2.putText(img, option, (40, y_pos), font, 0.7, (50, 50, 50), 1)
+            y_pos += 45
+        
+        cv2.putText(img, 'Press the number key for your choice', (20, 370), font, 0.6, (100, 100, 100), 1)
+        
+        return img
+    
+    def _input_context_text(self):
+        """Get context text input from user"""
+        print("\n" + "="*70)
+        print("\033[48;5;33m\033[97m\033[1m ENTER MEETING CONTEXT \033[0m")
+        print("Type your context below (press Enter when done):")
+        print("="*70)
+        
+        input_text = []
+        input_window = 'Context Input'
+        
+        while True:
+            img = self._create_context_input_image(''.join(input_text))
+            cv2.imshow(input_window, img)
+            
+            key = cv2.waitKey(0)
+            
+            if key == 27:  # Esc
+                print("\033[93mContext input cancelled.\033[0m\n")
+                cv2.destroyWindow(input_window)
+                break
+            elif key == 13 or key == 10:  # Enter
+                text = ''.join(input_text)
+                cv2.destroyWindow(input_window)
+                
+                if text.strip():
+                    self.set_meeting_context(text.strip())
+                else:
+                    print("\033[93mNo context entered.\033[0m\n")
+                break
+            elif key == 8 or key == 127:  # Backspace
+                if input_text:
+                    input_text.pop()
+            elif 32 <= key <= 126:  # Printable ASCII
+                input_text.append(chr(key))
+    
+    def _create_context_input_image(self, text):
+        """Create input image for context text"""
+        img = 255 * np.ones((300, 800, 3), dtype=np.uint8)
+        
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(img, 'Enter Meeting Context', (20, 40), font, 1.2, (0, 0, 0), 2)
+        cv2.putText(img, 'Type your context below:', (20, 80), font, 0.6, (100, 100, 100), 1)
+        cv2.putText(img, 'Press Enter to save | Esc to cancel', (20, 280), font, 0.5, (150, 150, 150), 1)
+        
+        # Draw input box
+        cv2.rectangle(img, (20, 100), (780, 250), (200, 200, 200), 2)
+        
+        # Add text with word wrapping
+        if text:
+            max_width = 740
+            y_pos = 135
+            words = text.split(' ')
+            current_line = ''
+            
+            for word in words:
+                test_line = current_line + word + ' '
+                text_size = cv2.getTextSize(test_line, font, 0.6, 1)[0]
+                
+                if text_size[0] > max_width:
+                    if current_line:
+                        cv2.putText(img, current_line.strip(), (30, y_pos), font, 0.6, (0, 0, 0), 1)
+                        y_pos += 30
+                        current_line = word + ' '
+                else:
+                    current_line = test_line
+            
+            if current_line:
+                cv2.putText(img, current_line.strip(), (30, y_pos), font, 0.6, (0, 0, 0), 1)
+        
+        # Add cursor
+        cursor_x = 30 + cv2.getTextSize(text, font, 0.6, 1)[0][0] if text else 30
+        cv2.line(img, (cursor_x, 120), (cursor_x, 230), (0, 0, 255), 2)
+        
+        return img
+    
+    def _upload_text_file(self):
+        """Upload and read a text file for context"""
+        print("\n" + "="*70)
+        print("\033[48;5;33m\033[97m\033[1m UPLOAD TEXT FILE \033[0m")
+        print("Enter the full path to your .txt file:")
+        print("="*70)
+        
+        file_path = input("> ").strip()
+        
+        if not file_path:
+            print("\033[93mNo file path provided.\033[0m\n")
+            return
+        
+        # Remove quotes if present
+        file_path = file_path.strip('"').strip("'")
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            if content.strip():
+                # Limit to first 2000 characters to avoid overwhelming the LLM
+                if len(content) > 2000:
+                    content = content[:2000] + "..."
+                    print("\033[93mNote: Content truncated to 2000 characters\033[0m")
+                
+                self.set_meeting_context(content.strip())
+                print(f"\033[96m✓ Loaded {len(content)} characters from file\033[0m\n")
+            else:
+                print("\033[93mFile is empty.\033[0m\n")
+        except FileNotFoundError:
+            print(f"\033[91m✗ File not found: {file_path}\033[0m\n")
+        except Exception as e:
+            print(f"\033[91m✗ Error reading file: {e}\033[0m\n")
+    
+    def _upload_pdf_file(self):
+        """Upload and read a PDF file for context"""
+        print("\n" + "="*70)
+        print("\033[48;5;33m\033[97m\033[1m UPLOAD PDF FILE \033[0m")
+        print("Enter the full path to your .pdf file:")
+        print("="*70)
+        
+        file_path = input("> ").strip()
+        
+        if not file_path:
+            print("\033[93mNo file path provided.\033[0m\n")
+            return
+        
+        # Remove quotes if present
+        file_path = file_path.strip('"').strip("'")
+        
+        try:
+            with open(file_path, 'rb') as f:
+                pdf_reader = PyPDF2.PdfReader(f)
+                
+                # Extract text from all pages
+                content = ""
+                for page in pdf_reader.pages:
+                    content += page.extract_text() + "\n"
+            
+            if content.strip():
+                # Limit to first 2000 characters
+                if len(content) > 2000:
+                    content = content[:2000] + "..."
+                    print("\033[93mNote: Content truncated to 2000 characters\033[0m")
+                
+                self.set_meeting_context(content.strip())
+                print(f"\033[96m✓ Loaded {len(content)} characters from PDF ({len(pdf_reader.pages)} pages)\033[0m\n")
+            else:
+                print("\033[93mPDF appears to be empty or contains no extractable text.\033[0m\n")
+        except FileNotFoundError:
+            print(f"\033[91m✗ File not found: {file_path}\033[0m\n")
+        except Exception as e:
+            print(f"\033[91m✗ Error reading PDF: {e}\033[0m\n")
+    
+    def _display_current_context(self):
+        """Display the current meeting context"""
+        print("\n" + "="*70)
+        print("\033[48;5;33m\033[97m\033[1m CURRENT CONTEXT \033[0m")
+        print("="*70)
+        
+        if self.meeting_context:
+            print(f"\n{self.meeting_context}\n")
+            print(f"\033[96m({len(self.meeting_context)} characters)\033[0m")
+        else:
+            print("\n\033[93mNo context currently set.\033[0m")
+        
+        print("\n" + "="*70)
+        print("Press any key to continue...")
+        cv2.waitKey(0)
 
     async def correct_output_async(self, output, sequence_num):
         # perform inference on the raw output to get back a "correct" version
@@ -416,6 +675,16 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
                 else:
                     # Debug: 't' key pressed but blocked
                     print(f"\033[93mDEBUG: 't' key blocked. is_typing={self.is_typing}, waiting_for_input={self.waiting_for_input}, time_since_typing={time_since_typing:.2f}s\033[0m")
+            elif key == ord('c'):
+                # Check if enough time has passed since last typing (0.5 second buffer)
+                time_since_typing = time.time() - self.last_typing_time
+                if not self.is_typing and not self.waiting_for_input and time_since_typing > 0.5:
+                    # open context management dialog
+                    print(f"\033[93mDEBUG: 'c' key detected. Opening context management.\033[0m")
+                    self.context_management_dialog()
+                else:
+                    # Debug: 'c' key pressed but blocked
+                    print(f"\033[93mDEBUG: 'c' key blocked. is_typing={self.is_typing}, waiting_for_input={self.waiting_for_input}, time_since_typing={time_since_typing:.2f}s\033[0m")
 
             current_time = time.time()
 

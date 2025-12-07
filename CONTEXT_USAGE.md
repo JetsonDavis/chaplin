@@ -13,7 +13,32 @@ Chaplin now supports contextual information to help the LLM make better correcti
 - You can provide context about the meeting/conversation topic
 - This helps the LLM choose more appropriate words when multiple interpretations are possible
 
+### 3. **Live Context Management** (NEW!)
+- Press **'c'** key during runtime to open the Context Management dialog
+- Update context on-the-fly without restarting
+- Upload text files or PDF documents as context
+- View and clear context as needed
+
 ## How to Use
+
+### Live Context Management (Recommended)
+
+Press the **'c'** key while Chaplin is running to open the Context Management menu:
+
+**Options:**
+1. **Update meeting context** - Type context directly in a window
+2. **Upload text file** - Load context from a .txt file (up to 2000 characters)
+3. **Upload PDF document** - Extract text from a PDF file (up to 2000 characters)
+4. **View current context** - Display the currently active context
+5. **Clear context** - Remove all context
+6. **Cancel** - Close the menu
+
+**Example workflow:**
+1. Start Chaplin
+2. Press 'c' to open context management
+3. Press '3' to upload a PDF
+4. Enter path: `/Users/jeff/Documents/meeting_agenda.pdf`
+5. Context is now loaded and will be used for all future corrections!
 
 ### Setting Context via Config File
 

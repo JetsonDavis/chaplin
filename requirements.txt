@@ -13,3 +13,4 @@ pydantic
 pynput
 elevenlabs
 pygame
+PyPDF2
