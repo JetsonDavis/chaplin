@@ -4,9 +4,11 @@ Quick reference for all keyboard controls in Chaplin.
 
 ## Main Controls
 
+**IMPORTANT**: All hotkeys only work when the Chaplin video window is focused. This prevents interference with other applications.
+
 | Key | Action | Description |
 |-----|--------|-------------|
-| **Alt/Option** | Toggle Recording | Start/stop lip-reading recording |
+| **R** | Toggle Recording | Start/stop lip-reading recording |
 | **T** | Manual TTS | Open text input dialog to speak custom text |
 | **C** | Context Management | Open context management menu |
 | **Q** | Quit | Exit the application |
@@ -56,12 +58,20 @@ When entering context text:
 ## Workflow Example
 
 1. **Start Chaplin** → Camera window opens
-2. **Press 'C'** → Set up meeting context
-3. **Press Alt/Option** → Start recording
-4. **Speak into camera** → Lip-reading happens
-5. **Release Alt/Option** → Text is typed and spoken
-6. **Press 'T'** → Manually speak additional text
-7. **Press 'Q'** → Exit application
+2. **Click on Chaplin window** → Make sure it's focused
+3. **Press 'C'** → Set up meeting context
+4. **Press 'R'** → Start recording
+5. **Speak into camera** → Lip-reading happens
+6. **Press 'R' again** → Stop recording, text is typed and spoken
+7. **Press 'T'** → Manually speak additional text
+8. **Press 'Q'** → Exit application
+
+## Important Notes
+
+- **Window Focus Required**: All hotkeys (R, T, C, Q) only work when the Chaplin video window is focused
+- **No Global Hotkeys**: Keys won't interfere with other applications
+- **Click to Focus**: Click on the Chaplin window before using any hotkeys
+- **Recording Indicator**: A black circle appears in the video when recording is active
 
 ## Audio Routing (Zoom)
 

@@ -6,12 +6,13 @@ from chaplin import Chaplin
 
 @hydra.main(version_base=None, config_path="hydra_configs", config_name="default")
 def main(cfg):
-    # initialize Chaplin with optional voice sample path, TTS speaker, camera index, and meeting context
+    # initialize Chaplin with optional voice sample path, TTS speaker, camera index, meeting context, and vector DB persistence
     chaplin = Chaplin(
         voice_sample_path=cfg.voice_sample_path, 
         tts_speaker=cfg.tts_speaker,
         camera_index=cfg.camera_index,
-        meeting_context=cfg.meeting_context
+        meeting_context=cfg.meeting_context,
+        persist_vector_db=cfg.persist_vector_db
     )
 
     # load the model

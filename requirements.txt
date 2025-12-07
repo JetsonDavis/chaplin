@@ -14,3 +14,4 @@ pynput
 elevenlabs
 pygame
 PyPDF2
+chromadb

@@ -96,11 +96,24 @@ HOW ABOUT Q FOUR
 
 The LLM can now better infer that "Q FOUR" should be "Q4" (fourth quarter) rather than "cue for" or other homophones.
 
+## Vector Database Integration
+
+Chaplin uses ChromaDB for intelligent semantic search:
+
+- **Conversation history**: Automatically stores all utterances with embeddings
+- **Document chunks**: Uploaded files are chunked and stored for semantic search
+- **Smart retrieval**: Finds relevant context even from hours ago in long conversations
+- **No token limits**: Efficient search through large documents
+
+See [VECTOR_DATABASE.md](VECTOR_DATABASE.md) for detailed information.
+
 ## Benefits
 
 - **Better word choice**: Context helps disambiguate homophones (e.g., "their" vs "there")
 - **Domain vocabulary**: Technical terms are more likely to be recognized correctly
 - **Coherent corrections**: Corrections maintain conversational flow
+- **Long conversations**: Remember topics from hours ago via vector search
+- **Large documents**: Search through extensive documentation efficiently
 - **Reduced errors**: Fewer nonsensical corrections when context is clear
 
 ## Tips

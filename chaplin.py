@@ -11,6 +11,9 @@ import tempfile
 import pygame
 import numpy as np
 import PyPDF2
+import chromadb
+from chromadb.config import Settings
+import uuid
 
 
 class ChaplinOutput(BaseModel):
@@ -19,9 +22,10 @@ class ChaplinOutput(BaseModel):
 
 
 class Chaplin:
-    def __init__(self, voice_sample_path=None, tts_speaker="Claribel Dervla", camera_index=0, meeting_context=""):
+    def __init__(self, voice_sample_path=None, tts_speaker="Claribel Dervla", camera_index=0, meeting_context="", persist_vector_db=True):
         self.vsr_model = None
         self.camera_index = camera_index
+        self.persist_vector_db = persist_vector_db
 
         # flag to toggle recording
         self.recording = False
@@ -41,6 +45,44 @@ class Chaplin:
         self.meeting_context = meeting_context  # e.g., "discussing quarterly sales figures"
         if self.meeting_context:
             print(f"\033[96mMeeting context set: {self.meeting_context}\033[0m")
+        
+        # initialize ChromaDB for vector-based context retrieval
+        print("\n\033[48;5;94m\033[97m\033[1m INITIALIZING VECTOR DATABASE... \033[0m")
+        
+        if self.persist_vector_db:
+            # Persistent storage - saves to disk
+            db_path = os.path.join(os.path.dirname(__file__), "chroma_db")
+            self.chroma_client = chromadb.PersistentClient(
+                path=db_path,
+                settings=Settings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
+                )
+            )
+            print(f"\033[96mUsing persistent storage: {db_path}\033[0m")
+        else:
+            # Ephemeral storage - in-memory only
+            self.chroma_client = chromadb.Client(Settings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            ))
+            print("\033[96mUsing ephemeral storage (in-memory only)\033[0m")
+        
+        # Create collections
+        try:
+            self.conversation_collection = self.chroma_client.get_or_create_collection(
+                name="conversation_history",
+                metadata={"description": "Stores conversation utterances for semantic search"}
+            )
+            self.document_collection = self.chroma_client.get_or_create_collection(
+                name="uploaded_documents",
+                metadata={"description": "Stores chunks from uploaded documents"}
+            )
+            print("\033[48;5;22m\033[97m\033[1m ✓ VECTOR DATABASE READY \033[0m\n")
+        except Exception as e:
+            print(f"\033[91mWarning: Vector DB initialization failed: {e}\033[0m")
+            self.conversation_collection = None
+            self.document_collection = None
 
         # thread stuff
         self.executor = ThreadPoolExecutor(max_workers=1)
@@ -85,12 +127,6 @@ class Chaplin:
         self.typing_lock = None  # will be created in async loop
         self._init_async_resources()
 
-        # setup global hotkey for toggling recording with option/alt key
-        self.hotkey = keyboard.GlobalHotKeys({
-            '<alt>': self.toggle_recording
-        })
-        self.hotkey.start()
-
     def _run_event_loop(self):
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
@@ -107,8 +143,12 @@ class Chaplin:
         self.typing_condition = asyncio.Condition(self.typing_lock)
 
     def toggle_recording(self):
-        # toggle recording when alt/option key is pressed
+        # toggle recording
         self.recording = not self.recording
+        if self.recording:
+            print("\n\033[48;5;196m\033[97m\033[1m ● RECORDING STARTED \033[0m")
+        else:
+            print("\n\033[48;5;22m\033[97m\033[1m ■ RECORDING STOPPED \033[0m")
     
     def set_meeting_context(self, context):
         """Update the meeting context for better LLM corrections"""
@@ -118,7 +158,19 @@ class Chaplin:
     def clear_conversation_history(self):
         """Clear the conversation history"""
         self.conversation_history = []
-        print("\n\033[96m🗑️  Conversation history cleared\033[0m\n")
+        # Also clear vector database
+        if self.conversation_collection:
+            try:
+                self.chroma_client.delete_collection("conversation_history")
+                self.conversation_collection = self.chroma_client.create_collection(
+                    name="conversation_history",
+                    metadata={"description": "Stores conversation utterances for semantic search"}
+                )
+                print("\n\033[96m🗑️  Conversation history and vector DB cleared\033[0m\n")
+            except Exception as e:
+                print(f"\n\033[96m🗑️  Conversation history cleared (vector DB error: {e})\033[0m\n")
+        else:
+            print("\n\033[96m🗑️  Conversation history cleared\033[0m\n")
     
     def context_management_dialog(self):
         """Open context management dialog for live context updates and document uploads"""
@@ -287,6 +339,32 @@ class Chaplin:
         
         return img
     
+    def _chunk_text(self, text, chunk_size=500, overlap=50):
+        """Split text into overlapping chunks for vector storage"""
+        chunks = []
+        start = 0
+        text_len = len(text)
+        
+        while start < text_len:
+            end = start + chunk_size
+            chunk = text[start:end]
+            
+            # Try to break at sentence boundary
+            if end < text_len:
+                last_period = chunk.rfind('.')
+                last_question = chunk.rfind('?')
+                last_exclaim = chunk.rfind('!')
+                last_sentence = max(last_period, last_question, last_exclaim)
+                
+                if last_sentence > chunk_size * 0.5:  # at least halfway through
+                    chunk = chunk[:last_sentence + 1]
+                    end = start + last_sentence + 1
+            
+            chunks.append(chunk.strip())
+            start = end - overlap
+        
+        return chunks
+    
     def _upload_text_file(self):
         """Upload and read a text file for context"""
         print("\n" + "="*70)
@@ -303,18 +381,37 @@ class Chaplin:
         # Remove quotes if present
         file_path = file_path.strip('"').strip("'")
         
+        # Remove backslash escapes (from dragging files in Finder)
+        file_path = file_path.replace('\\ ', ' ')
+        
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
             if content.strip():
-                # Limit to first 2000 characters to avoid overwhelming the LLM
-                if len(content) > 2000:
-                    content = content[:2000] + "..."
-                    print("\033[93mNote: Content truncated to 2000 characters\033[0m")
+                # Chunk the document for vector storage
+                chunks = self._chunk_text(content)
                 
-                self.set_meeting_context(content.strip())
-                print(f"\033[96m✓ Loaded {len(content)} characters from file\033[0m\n")
+                # Store in vector database
+                if self.document_collection:
+                    try:
+                        self.document_collection.add(
+                            documents=chunks,
+                            ids=[str(uuid.uuid4()) for _ in chunks],
+                            metadatas=[{
+                                "source": os.path.basename(file_path),
+                                "chunk_index": i,
+                                "type": "text_file"
+                            } for i in range(len(chunks))]
+                        )
+                        print(f"\033[96m✓ Stored {len(chunks)} chunks in vector database\033[0m")
+                    except Exception as e:
+                        print(f"\033[93mWarning: Failed to store in vector DB: {e}\033[0m")
+                
+                # Also set a summary as meeting context
+                summary = content[:500] + "..." if len(content) > 500 else content
+                self.set_meeting_context(f"Document: {os.path.basename(file_path)}\n{summary}")
+                print(f"\033[96m✓ Loaded {len(content)} characters from file ({len(chunks)} chunks)\033[0m\n")
             else:
                 print("\033[93mFile is empty.\033[0m\n")
         except FileNotFoundError:
@@ -338,6 +435,9 @@ class Chaplin:
         # Remove quotes if present
         file_path = file_path.strip('"').strip("'")
         
+        # Remove backslash escapes (from dragging files in Finder)
+        file_path = file_path.replace('\\ ', ' ')
+        
         try:
             with open(file_path, 'rb') as f:
                 pdf_reader = PyPDF2.PdfReader(f)
@@ -348,13 +448,30 @@ class Chaplin:
                     content += page.extract_text() + "\n"
             
             if content.strip():
-                # Limit to first 2000 characters
-                if len(content) > 2000:
-                    content = content[:2000] + "..."
-                    print("\033[93mNote: Content truncated to 2000 characters\033[0m")
+                # Chunk the document for vector storage
+                chunks = self._chunk_text(content)
                 
-                self.set_meeting_context(content.strip())
-                print(f"\033[96m✓ Loaded {len(content)} characters from PDF ({len(pdf_reader.pages)} pages)\033[0m\n")
+                # Store in vector database
+                if self.document_collection:
+                    try:
+                        self.document_collection.add(
+                            documents=chunks,
+                            ids=[str(uuid.uuid4()) for _ in chunks],
+                            metadatas=[{
+                                "source": os.path.basename(file_path),
+                                "chunk_index": i,
+                                "type": "pdf",
+                                "pages": len(pdf_reader.pages)
+                            } for i in range(len(chunks))]
+                        )
+                        print(f"\033[96m✓ Stored {len(chunks)} chunks in vector database\033[0m")
+                    except Exception as e:
+                        print(f"\033[93mWarning: Failed to store in vector DB: {e}\033[0m")
+                
+                # Also set a summary as meeting context
+                summary = content[:500] + "..." if len(content) > 500 else content
+                self.set_meeting_context(f"PDF Document: {os.path.basename(file_path)} ({len(pdf_reader.pages)} pages)\n{summary}")
+                print(f"\033[96m✓ Loaded {len(content)} characters from PDF ({len(pdf_reader.pages)} pages, {len(chunks)} chunks)\033[0m\n")
             else:
                 print("\033[93mPDF appears to be empty or contains no extractable text.\033[0m\n")
         except FileNotFoundError:
@@ -382,25 +499,68 @@ class Chaplin:
         # perform inference on the raw output to get back a "correct" version
         print("\n\033[48;5;94m\033[97m\033[1m CORRECTING WITH LLM... \033[0m")
         
-        # Build context from conversation history
+        # Build context from conversation history and vector search
         context_parts = []
         if self.meeting_context:
             context_parts.append(f"Meeting context: {self.meeting_context}")
         
+        # Get semantically relevant past utterances from vector DB
+        if self.conversation_collection:
+            try:
+                results = self.conversation_collection.query(
+                    query_texts=[output],
+                    n_results=3
+                )
+                if results['documents'] and results['documents'][0]:
+                    relevant_history = "\n".join([f"- {doc}" for doc in results['documents'][0]])
+                    context_parts.append(f"Relevant past conversation:\n{relevant_history}")
+            except Exception as e:
+                print(f"\033[93mWarning: Vector search failed: {e}\033[0m")
+        
+        # Also include recent conversation (last 3)
         if self.conversation_history:
             history_text = "\n".join([f"- {item}" for item in self.conversation_history[-3:]])  # last 3 items
             context_parts.append(f"Recent conversation:\n{history_text}")
+        
+        # Get relevant document chunks from vector DB (only if really relevant)
+        if self.document_collection:
+            try:
+                doc_results = self.document_collection.query(
+                    query_texts=[output],
+                    n_results=1  # Reduced from 2 to 1 to avoid overwhelming
+                )
+                if doc_results['documents'] and doc_results['documents'][0]:
+                    # Only include if it seems relevant (truncate heavily)
+                    relevant_docs = "\n".join([f"- {doc[:150]}..." for doc in doc_results['documents'][0]])
+                    context_parts.append(f"Relevant document excerpts (for reference only):\n{relevant_docs}")
+            except Exception as e:
+                print(f"\033[93mWarning: Document search failed: {e}\033[0m")
         
         context_section = "\n\n".join(context_parts) if context_parts else ""
         
         # Build system prompt with context
         system_prompt = f"""You are an assistant that helps make corrections to the output of a lipreading model. The text you will receive was transcribed using a video-to-text system that attempts to lipread the subject speaking in the video, so the text will likely be imperfect. The input text will also be in all-caps, although your response should be capitalized correctly and should NOT be in all-caps.
 
-If something seems unusual, assume it was mistranscribed. Do your best to infer the words actually spoken, and make changes to the mistranscriptions in your response. Do not add more words or content, just change the ones that seem to be out of place (and, therefore, mistranscribed). Do not change even the wording of sentences, just individual words that look nonsensical in the context of all of the other words in the sentence.
+CRITICAL: Your job is to CORRECT the transcription, NOT to replace it with something else entirely. The transcription represents what the person actually said - you are only fixing mistranscribed words.
+
+IMPORTANT RULES:
+1. PRESERVE ALL WORDS - Do not remove or delete any words from the transcription
+2. Only REPLACE individual words that seem mistranscribed with similar-sounding alternatives
+3. Do NOT add new words or content
+4. Keep the same number of words and sentence structure
+5. If a word seems unusual but could be correct (like "hamburger", "pizza", etc.), keep it
+6. DO NOT replace the entire transcription with text from documents or context - only use context to help choose between similar-sounding words
+
+If something seems unusual, assume it was mistranscribed and replace it with a similar-sounding word that makes more sense in context. For example:
+- "THEIR" might be "THERE" or "THEY'RE"
+- "TO" might be "TWO" or "TOO"
+- "A CONVOLUTIONAL" stays "A CONVOLUTIONAL" (don't replace with document titles!)
 
 Also, add correct punctuation to the entire text. ALWAYS end each sentence with the appropriate sentence ending: '.', '?', or '!'.
 
 {context_section if context_section else "No prior context available."}
+
+NOTE: The context above is for reference only to help disambiguate similar-sounding words. Do NOT replace the transcription with text from the context.
 
 Return the corrected text in the format of 'list_of_changes' and 'corrected_text'."""
         
@@ -434,9 +594,21 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
         chat_output.corrected_text += ' '
         
         # add to conversation history for future context
-        self.conversation_history.append(chat_output.corrected_text.strip())
+        corrected = chat_output.corrected_text.strip()
+        self.conversation_history.append(corrected)
         if len(self.conversation_history) > self.max_history_items:
             self.conversation_history.pop(0)  # remove oldest item
+        
+        # add to vector database for semantic search
+        if self.conversation_collection:
+            try:
+                self.conversation_collection.add(
+                    documents=[corrected],
+                    ids=[str(uuid.uuid4())],
+                    metadatas=[{"timestamp": time.time(), "type": "utterance"}]
+                )
+            except Exception as e:
+                print(f"\033[93mWarning: Failed to add to vector DB: {e}\033[0m")
 
         # wait until it's this task's turn to type
         async with self.typing_condition:
@@ -447,15 +619,17 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
             # Only type if we're not in manual input mode
             if not self.waiting_for_input:
                 print(f"\n\033[48;5;33m\033[97m\033[1m TYPING TEXT \033[0m: \"{chat_output.corrected_text.strip()}\"")
-                self.is_typing = True  # Set flag before typing
+                self.is_typing = True  # Set flag before typing AND TTS
                 self.kbd_controller.type(chat_output.corrected_text)
-                self.is_typing = False  # Clear flag after typing
-                self.last_typing_time = time.time()  # Record when typing finished
                 print("\033[48;5;22m\033[97m\033[1m ✓ TYPING COMPLETE \033[0m")
                 
-                # speak the corrected text using TTS
+                # speak the corrected text using TTS (still blocking keys)
                 print("\033[48;5;94m\033[97m\033[1m STARTING TTS... \033[0m")
                 self._speak_text(chat_output.corrected_text)
+                
+                # Clear flag and record time AFTER both typing and TTS complete
+                self.is_typing = False
+                self.last_typing_time = time.time()
             else:
                 print("\033[93mSkipping typing/TTS - manual input mode active\033[0m")
 
@@ -659,6 +833,15 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
 
         while True:
             key = cv2.waitKey(1) & 0xFF
+            
+            # Check if the Chaplin window exists and is focused
+            # This prevents keyboard controller typed characters from triggering dialogs
+            try:
+                window_focused = cv2.getWindowProperty('Chaplin', cv2.WND_PROP_VISIBLE) >= 1
+            except cv2.error:
+                # Window doesn't exist yet, assume not focused
+                window_focused = False
+            
             if key == ord('q'):
                 # remove any remaining videos that were saved to disk
                 for file in os.listdir():
@@ -666,25 +849,29 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
                         os.remove(file)
                 break
             elif key == ord('t'):
-                # Check if enough time has passed since last typing (0.5 second buffer)
+                # Only respond if NOT typing/TTS and NOT in input mode
                 time_since_typing = time.time() - self.last_typing_time
-                if not self.is_typing and not self.waiting_for_input and time_since_typing > 0.5:
+                if not self.is_typing and not self.waiting_for_input and time_since_typing > 2.0:
                     # open manual TTS input dialog
                     print(f"\033[93mDEBUG: 't' key detected. Opening TTS input.\033[0m")
                     self.manual_tts_input()
-                else:
+                elif key == ord('t'):
                     # Debug: 't' key pressed but blocked
                     print(f"\033[93mDEBUG: 't' key blocked. is_typing={self.is_typing}, waiting_for_input={self.waiting_for_input}, time_since_typing={time_since_typing:.2f}s\033[0m")
             elif key == ord('c'):
-                # Check if enough time has passed since last typing (0.5 second buffer)
+                # Only respond if NOT typing/TTS and NOT in input mode
                 time_since_typing = time.time() - self.last_typing_time
-                if not self.is_typing and not self.waiting_for_input and time_since_typing > 0.5:
+                if not self.is_typing and not self.waiting_for_input and time_since_typing > 2.0:
                     # open context management dialog
                     print(f"\033[93mDEBUG: 'c' key detected. Opening context management.\033[0m")
                     self.context_management_dialog()
-                else:
+                elif key == ord('c'):
                     # Debug: 'c' key pressed but blocked
                     print(f"\033[93mDEBUG: 'c' key blocked. is_typing={self.is_typing}, waiting_for_input={self.waiting_for_input}, time_since_typing={time_since_typing:.2f}s\033[0m")
+            elif key == ord('r'):
+                # Toggle recording with 'r' key (only when Chaplin window is focused)
+                if not self.is_typing and not self.waiting_for_input:
+                    self.toggle_recording()
 
             current_time = time.time()
 
@@ -778,9 +965,6 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
         if out:
             out.release()
         cv2.destroyAllWindows()
-
-        # stop global hotkey listener
-        self.hotkey.stop()
 
         # stop async event loop
         self.loop.call_soon_threadsafe(self.loop.stop)

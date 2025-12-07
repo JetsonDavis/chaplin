@@ -31,3 +31,6 @@ build/
 *.egg-info/
 benchmarks/**
 *.mp4
+
+# Vector database storage
+chroma_db/

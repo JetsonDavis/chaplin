@@ -24,3 +24,4 @@ voice_sample_path: null  # path to voice sample WAV file for TTS cloning (option
 tts_speaker: "fZg8PU79SvMi75ypVscL"  # Your cloned ElevenLabs voice ID
 camera_index: 2  # camera device index (0=Camo, 1=OBS Virtual, 2=MacBook Pro built-in)
 meeting_context: ""  # optional context to help LLM corrections (e.g., "discussing quarterly sales figures", "technical presentation about AI")
+persist_vector_db: true  # save vector database to disk (true) or use in-memory only (false)
