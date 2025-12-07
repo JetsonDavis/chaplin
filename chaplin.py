@@ -955,7 +955,12 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
                 if fut.done():
                     result = fut.result()
                     # once done processing, delete the video with the video path
-                    os.remove(result["video_path"])
+                    try:
+                        if os.path.exists(result["video_path"]):
+                            os.remove(result["video_path"])
+                            print(f"\033[90mDeleted processed video: {os.path.basename(result['video_path'])}\033[0m")
+                    except Exception as e:
+                        print(f"\033[93mWarning: Could not delete {result['video_path']}: {e}\033[0m")
                     futures.remove(fut)
                 else:
                     break
