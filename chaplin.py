@@ -294,7 +294,25 @@ class Chaplin:
                 cv2.destroyWindow(input_window)
                 
                 if text.strip():
+                    # Set as meeting context
                     self.set_meeting_context(text.strip())
+                    
+                    # Also store in vector database for searchability
+                    if self.document_collection:
+                        try:
+                            # Store as a single chunk with manual entry metadata
+                            self.document_collection.add(
+                                documents=[text.strip()],
+                                ids=[str(uuid.uuid4())],
+                                metadatas=[{
+                                    "source": f"Manual Entry ({time.strftime('%Y-%m-%d %H:%M:%S')})",
+                                    "type": "manual",
+                                    "timestamp": time.time()
+                                }]
+                            )
+                            print(f"\033[96m✓ Context stored in vector database\033[0m")
+                        except Exception as e:
+                            print(f"\033[93mWarning: Could not store in vector DB: {e}\033[0m")
                 else:
                     print("\033[93mNo context entered.\033[0m\n")
                 break
@@ -387,7 +405,9 @@ class Chaplin:
         file_path = file_path.strip('"').strip("'")
         
         # Remove backslash escapes (from dragging files in Finder)
-        file_path = file_path.replace('\\ ', ' ')
+        # Handle both '\ ' (escaped space) and standalone backslashes
+        import re
+        file_path = re.sub(r'\\(.)', r'\1', file_path)
         
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -441,7 +461,9 @@ class Chaplin:
         file_path = file_path.strip('"').strip("'")
         
         # Remove backslash escapes (from dragging files in Finder)
-        file_path = file_path.replace('\\ ', ' ')
+        # Handle both '\ ' (escaped space) and standalone backslashes
+        import re
+        file_path = re.sub(r'\\(.)', r'\1', file_path)
         
         try:
             with open(file_path, 'rb') as f:
@@ -496,9 +518,7 @@ class Chaplin:
         else:
             print("\n\033[93mNo context currently set.\033[0m")
         
-        print("\n" + "="*70)
-        print("Press any key to continue...")
-        cv2.waitKey(0)
+        print("="*70 + "\n")
     
     def _view_uploaded_documents(self):
         """View all uploaded documents and manually entered context from vector database"""
@@ -556,9 +576,7 @@ class Chaplin:
         except Exception as e:
             print(f"\n\033[91mError retrieving documents: {e}\033[0m")
         
-        print("\n" + "="*70)
-        print("Press any key to continue...")
-        cv2.waitKey(0)
+        print("="*70 + "\n")
 
     async def correct_output_async(self, output, sequence_num):
         # perform inference on the raw output to get back a "correct" version
@@ -606,26 +624,36 @@ class Chaplin:
         # Build system prompt with context
         system_prompt = f"""You are an assistant that helps make corrections to the output of a lipreading model. The text you will receive was transcribed using a video-to-text system that attempts to lipread the subject speaking in the video, so the text will likely be imperfect. The input text will also be in all-caps, although your response should be capitalized correctly and should NOT be in all-caps.
 
-CRITICAL: Your job is to CORRECT the transcription, NOT to replace it with something else entirely. The transcription represents what the person actually said - you are only fixing mistranscribed words.
+⚠️ CRITICAL RULES - MUST FOLLOW EXACTLY:
 
-IMPORTANT RULES:
-1. PRESERVE ALL WORDS - Do not remove or delete any words from the transcription
-2. Only REPLACE individual words that seem mistranscribed with similar-sounding alternatives
-3. Do NOT add new words or content
-4. Keep the same number of words and sentence structure
-5. If a word seems unusual but could be correct (like "hamburger", "pizza", etc.), keep it
-6. DO NOT replace the entire transcription with text from documents or context - only use context to help choose between similar-sounding words
+1. **PRESERVE EVERY SINGLE WORD** - The corrected text MUST have the EXACT SAME NUMBER of words as the input
+2. **ONLY REPLACE WORDS** - You can ONLY change individual words to similar-sounding alternatives
+3. **NEVER DELETE WORDS** - Deleting words is STRICTLY FORBIDDEN
+4. **NEVER ADD WORDS** - Adding words is STRICTLY FORBIDDEN
+5. **KEEP SENTENCE STRUCTURE** - The structure must remain identical
 
-If something seems unusual, assume it was mistranscribed and replace it with a similar-sounding word that makes more sense in context. For example:
-- "THEIR" might be "THERE" or "THEY'RE"
-- "TO" might be "TWO" or "TOO"
-- "A CONVOLUTIONAL" stays "A CONVOLUTIONAL" (don't replace with document titles!)
+Your ONLY job is to:
+- Fix capitalization (input is ALL-CAPS, output should be normal)
+- Add punctuation (periods, commas, question marks)
+- Replace mistranscribed words with similar-sounding correct words
 
-Also, add correct punctuation to the entire text. ALWAYS end each sentence with the appropriate sentence ending: '.', '?', or '!'.
+EXAMPLES OF CORRECT BEHAVIOR:
+Input: "I HAVE READ MANY BOOKS ABOUT THIS SUBJECT"
+Output: "I have read many books about this subject." ✓ (same 8 words)
+
+Input: "THEIR GOING TO THE STORE"
+Output: "They're going to the store." ✓ (same 5 words, fixed "THEIR" → "They're")
+
+EXAMPLES OF FORBIDDEN BEHAVIOR:
+Input: "I HAVE READ MANY BOOKS ABOUT THIS SUBJECT"
+Output: "I had read." ✗ WRONG - deleted 6 words!
+
+Input: "HOW ABOUT A HAMBURGER"
+Output: "What about." ✗ WRONG - deleted words!
 
 {context_section if context_section else "No prior context available."}
 
-NOTE: The context above is for reference only to help disambiguate similar-sounding words. Do NOT replace the transcription with text from the context.
+NOTE: Context is ONLY for helping choose between similar-sounding words (like "their" vs "there"). Do NOT use context to replace or remove words.
 
 Return the corrected text in the format of 'list_of_changes' and 'corrected_text'."""
         
