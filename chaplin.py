@@ -191,8 +191,9 @@ class Chaplin:
         print("  2. Upload text file (.txt)")
         print("  3. Upload PDF document (.pdf)")
         print("  4. View current context")
-        print("  5. Clear context")
-        print("  6. Cancel")
+        print("  5. View all uploaded documents")
+        print("  6. Clear context")
+        print("  7. Cancel")
         print("="*70)
         
         context_window = 'Context Management'
@@ -222,10 +223,13 @@ class Chaplin:
                 # View current context
                 self._display_current_context()
             elif key == ord('5'):
+                # View all uploaded documents
+                self._view_uploaded_documents()
+            elif key == ord('6'):
                 # Clear context
                 self.meeting_context = ""
                 print("\n\033[96m✓ Context cleared\033[0m\n")
-            elif key == 27 or key == ord('6'):  # Esc or option 6
+            elif key == 27 or key == ord('7'):  # Esc or option 7
                 print("\033[93mContext management cancelled.\033[0m\n")
                 cv2.destroyWindow(context_window)
                 break
@@ -240,7 +244,7 @@ class Chaplin:
     
     def _create_context_menu_image(self):
         """Create menu image for context management"""
-        img = 255 * np.ones((400, 800, 3), dtype=np.uint8)
+        img = 255 * np.ones((450, 800, 3), dtype=np.uint8)
         
         font = cv2.FONT_HERSHEY_SIMPLEX
         cv2.putText(img, 'Context Management', (20, 40), font, 1.3, (0, 0, 0), 2)
@@ -252,15 +256,16 @@ class Chaplin:
             "2. Upload text file (.txt)",
             "3. Upload PDF document (.pdf)",
             "4. View current context",
-            "5. Clear context",
-            "6. Cancel (or press Esc)"
+            "5. View all uploaded documents",
+            "6. Clear context",
+            "7. Cancel (or press Esc)"
         ]
         
         for option in options:
             cv2.putText(img, option, (40, y_pos), font, 0.7, (50, 50, 50), 1)
             y_pos += 45
         
-        cv2.putText(img, 'Press the number key for your choice', (20, 370), font, 0.6, (100, 100, 100), 1)
+        cv2.putText(img, 'Press the number key for your choice', (20, 420), font, 0.6, (100, 100, 100), 1)
         
         return img
     
@@ -490,6 +495,66 @@ class Chaplin:
             print(f"\033[96m({len(self.meeting_context)} characters)\033[0m")
         else:
             print("\n\033[93mNo context currently set.\033[0m")
+        
+        print("\n" + "="*70)
+        print("Press any key to continue...")
+        cv2.waitKey(0)
+    
+    def _view_uploaded_documents(self):
+        """View all uploaded documents and manually entered context from vector database"""
+        print("\n" + "="*70)
+        print("\033[48;5;33m\033[97m\033[1m UPLOADED DOCUMENTS & CONTEXT \033[0m")
+        print("="*70)
+        
+        if not self.document_collection:
+            print("\n\033[93mVector database not available.\033[0m")
+            print("\n" + "="*70)
+            print("Press any key to continue...")
+            cv2.waitKey(0)
+            return
+        
+        try:
+            # Get all documents from the collection
+            results = self.document_collection.get()
+            
+            if not results['ids'] or len(results['ids']) == 0:
+                print("\n\033[93mNo documents have been uploaded yet.\033[0m")
+            else:
+                # Group by source file
+                docs_by_source = {}
+                for i, doc_id in enumerate(results['ids']):
+                    metadata = results['metadatas'][i] if results['metadatas'] else {}
+                    source = metadata.get('source', 'Unknown')
+                    doc_type = metadata.get('type', 'unknown')
+                    
+                    if source not in docs_by_source:
+                        docs_by_source[source] = {
+                            'type': doc_type,
+                            'chunks': 0,
+                            'total_chars': 0
+                        }
+                    
+                    docs_by_source[source]['chunks'] += 1
+                    if results['documents']:
+                        docs_by_source[source]['total_chars'] += len(results['documents'][i])
+                
+                print(f"\n\033[96mTotal documents: {len(docs_by_source)}\033[0m")
+                print(f"\033[96mTotal chunks: {len(results['ids'])}\033[0m\n")
+                
+                # Display each document
+                for idx, (source, info) in enumerate(docs_by_source.items(), 1):
+                    doc_type_label = {
+                        'pdf': '📝 PDF',
+                        'text_file': '📄 Text File',
+                        'manual': '✏️  Manual Entry'
+                    }.get(info['type'], '📁 Document')
+                    
+                    print(f"{idx}. {doc_type_label}: \033[1m{source}\033[0m")
+                    print(f"   Chunks: {info['chunks']} | Characters: {info['total_chars']:,}")
+                    print()
+        
+        except Exception as e:
+            print(f"\n\033[91mError retrieving documents: {e}\033[0m")
         
         print("\n" + "="*70)
         print("Press any key to continue...")

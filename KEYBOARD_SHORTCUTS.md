@@ -23,8 +23,9 @@ When the Context Management window is open:
 | **2** | Upload Text File | Load context from .txt file |
 | **3** | Upload PDF | Extract text from PDF document |
 | **4** | View Context | Display current context |
-| **5** | Clear Context | Remove all context |
-| **6** or **Esc** | Cancel | Close context menu |
+| **5** | View Documents | List all uploaded documents and stats |
+| **6** | Clear Context | Remove all context |
+| **7** or **Esc** | Cancel | Close context menu |
 
 ## Manual TTS Input (Press 'T')
 
