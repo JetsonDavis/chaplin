@@ -941,6 +941,11 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
         
         # Clear the flag
         self.waiting_for_input = False
+        
+        # Flush any buffered key events from cv2.waitKey
+        # This prevents terminal input from triggering hotkeys
+        for _ in range(10):
+            cv2.waitKey(1)
     
     def _save_training_sample(self, video_path, raw_output, llm_correction, ground_truth, was_correct):
         """Save a training sample to disk"""
