@@ -14,6 +14,7 @@ import PyPDF2
 import chromadb
 from chromadb.config import Settings
 import uuid
+import json
 
 
 class ChaplinOutput(BaseModel):
@@ -36,6 +37,14 @@ class Chaplin:
         # flag to track when we're typing (to prevent 't' key interference)
         self.is_typing = False
         self.last_typing_time = 0  # timestamp of last typing completion
+        
+        # training data collection
+        self.last_video_path = None
+        self.last_raw_output = None
+        self.last_llm_correction = None
+        self.previous_video_path = None  # Track previous video to delete
+        self.training_data_dir = os.path.join(os.path.dirname(__file__), "training_data")
+        os.makedirs(os.path.join(self.training_data_dir, "videos"), exist_ok=True)
         
         # conversation history for context
         self.conversation_history = []  # stores recent corrected utterances
@@ -677,6 +686,9 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
             response['message']['content'])
         
         print(f"\033[48;5;22m\033[97m\033[1m ✓ LLM CORRECTION COMPLETE \033[0m")
+        
+        # Store for potential training data collection
+        self.last_llm_correction = chat_output.corrected_text.strip()
 
         # if last character isn't a sentence ending (happens sometimes), add a period
         chat_output.corrected_text = chat_output.corrected_text.strip()
@@ -879,12 +891,104 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
         
         return img
 
+    def collect_training_sample(self):
+        """Collect a training sample by asking user for correct transcription"""
+        if not self.last_raw_output or not self.last_video_path:
+            print("\n\033[93mNo recent output to correct.\033[0m\n")
+            return
+        
+        # Set flag to prevent interference
+        self.waiting_for_input = True
+        
+        print("\n" + "="*70)
+        print("\033[48;5;33m\033[97m\033[1m TRAINING DATA COLLECTION \033[0m")
+        print("="*70)
+        print(f"\nRAW OUTPUT: {self.last_raw_output}")
+        print(f"LLM CORRECTION: {self.last_llm_correction}")
+        print("\n" + "="*70)
+        print("\nWas this correct? (y/n/s to skip): ")
+        
+        response = input("> ").strip().lower()
+        
+        if response == 'y':
+            # Mark as correct, save for positive examples
+            self._save_training_sample(
+                video_path=self.last_video_path,
+                raw_output=self.last_raw_output,
+                llm_correction=self.last_llm_correction,
+                ground_truth=self.last_llm_correction,
+                was_correct=True
+            )
+            print("\n\033[96m✓ Marked as correct and saved!\033[0m\n")
+        elif response == 'n':
+            # Get correct transcription
+            print("\nEnter the correct transcription:")
+            ground_truth = input("> ").strip()
+            
+            if ground_truth:
+                self._save_training_sample(
+                    video_path=self.last_video_path,
+                    raw_output=self.last_raw_output,
+                    llm_correction=self.last_llm_correction,
+                    ground_truth=ground_truth,
+                    was_correct=False
+                )
+                print("\n\033[96m✓ Training sample saved!\033[0m\n")
+            else:
+                print("\n\033[93mNo correction provided - skipped.\033[0m\n")
+        else:
+            print("\n\033[93mSkipped.\033[0m\n")
+        
+        # Clear the flag
+        self.waiting_for_input = False
+    
+    def _save_training_sample(self, video_path, raw_output, llm_correction, ground_truth, was_correct):
+        """Save a training sample to disk"""
+        try:
+            # Copy video to training data directory with training prefix
+            # Using 'training_' prefix to prevent deletion by cleanup code
+            video_filename = f"training_{int(time.time() * 1000)}.avi"
+            training_video_path = os.path.join(self.training_data_dir, "videos", video_filename)
+            
+            # Copy the video file (don't move it, as it may still be needed)
+            import shutil
+            shutil.copy2(video_path, training_video_path)
+            
+            # Create sample record
+            sample = {
+                "id": str(uuid.uuid4()),
+                "video_path": training_video_path,
+                "raw_output": raw_output,
+                "llm_correction": llm_correction,
+                "ground_truth": ground_truth,
+                "timestamp": time.time(),
+                "was_correct": was_correct,
+                "metadata": {
+                    "speaker": "default",
+                    "context": self.meeting_context if self.meeting_context else "none"
+                }
+            }
+            
+            # Append to JSONL file
+            samples_file = os.path.join(self.training_data_dir, "samples.jsonl")
+            with open(samples_file, "a") as f:
+                f.write(json.dumps(sample) + "\n")
+            
+            print(f"\033[90mSaved to: {training_video_path}\033[0m")
+            
+        except Exception as e:
+            print(f"\n\033[91mError saving training sample: {e}\033[0m\n")
+    
     def perform_inference(self, video_path):
         # perform inference on the video with the vsr model
         output = self.vsr_model(video_path)
 
         # print the raw output to console
         print(f"\n\033[48;5;21m\033[97m\033[1m RAW OUTPUT \033[0m: {output}\n")
+        
+        # Store for potential training data collection
+        self.last_raw_output = output
+        self.last_video_path = video_path
 
         # assign sequence number for this task
         sequence_num = self.current_sequence
@@ -940,6 +1044,14 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
                 for file in os.listdir():
                     if file.startswith(self.output_prefix) and (file.endswith('.mp4') or file.endswith('.avi')):
                         os.remove(file)
+                
+                # Also clean up the last video if it exists
+                if self.last_video_path and os.path.exists(self.last_video_path):
+                    try:
+                        os.remove(self.last_video_path)
+                    except:
+                        pass
+                
                 break
             elif key == ord('t'):
                 # Only respond if NOT typing/TTS and NOT in input mode
@@ -965,6 +1077,10 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
                 # Toggle recording with 'r' key (only when Chaplin window is focused)
                 if not self.is_typing and not self.waiting_for_input:
                     self.toggle_recording()
+            elif key == ord('e'):
+                # Correction/training mode - save training sample
+                if not self.is_typing and not self.waiting_for_input and self.last_raw_output:
+                    self.collect_training_sample()
 
             current_time = time.time()
 
@@ -1047,13 +1163,18 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
             for fut in futures:
                 if fut.done():
                     result = fut.result()
-                    # once done processing, delete the video with the video path
-                    try:
-                        if os.path.exists(result["video_path"]):
-                            os.remove(result["video_path"])
-                            print(f"\033[90mDeleted processed video: {os.path.basename(result['video_path'])}\033[0m")
-                    except Exception as e:
-                        print(f"\033[93mWarning: Could not delete {result['video_path']}: {e}\033[0m")
+                    # Don't delete immediately - keep for potential training data collection
+                    # Instead, delete the PREVIOUS video (if it exists)
+                    if self.previous_video_path and os.path.exists(self.previous_video_path):
+                        try:
+                            os.remove(self.previous_video_path)
+                            print(f"\033[90mDeleted previous video: {os.path.basename(self.previous_video_path)}\033[0m")
+                        except Exception as e:
+                            print(f"\033[93mWarning: Could not delete {self.previous_video_path}: {e}\033[0m")
+                    
+                    # Update previous video path for next iteration
+                    self.previous_video_path = result["video_path"]
+                    
                     futures.remove(fut)
                 else:
                     break

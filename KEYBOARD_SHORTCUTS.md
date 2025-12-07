@@ -11,6 +11,7 @@ Quick reference for all keyboard controls in Chaplin.
 | **R** | Toggle Recording | Start/stop lip-reading recording |
 | **T** | Manual TTS | Open text input dialog to speak custom text |
 | **C** | Context Management | Open context management menu |
+| **E** | Correct/Train | Collect training data by correcting output |
 | **Q** | Quit | Exit the application |
 
 ## Context Management Menu (Press 'C')

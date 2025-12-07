@@ -34,3 +34,6 @@ benchmarks/**
 
 # Vector database storage
 chroma_db/
+
+# Training data
+training_data/
