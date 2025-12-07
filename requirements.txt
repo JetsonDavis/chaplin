@@ -15,3 +15,4 @@ elevenlabs
 pygame
 PyPDF2
 chromadb
+PyQt6
