@@ -1058,21 +1058,13 @@ Return the corrected text in the format of 'list_of_changes' and 'corrected_text
                 time_since_typing = time.time() - self.last_typing_time
                 if not self.is_typing and not self.waiting_for_input and time_since_typing > 2.0:
                     # open manual TTS input dialog
-                    print(f"\033[93mDEBUG: 't' key detected. Opening TTS input.\033[0m")
                     self.manual_tts_input()
-                elif key == ord('t'):
-                    # Debug: 't' key pressed but blocked
-                    print(f"\033[93mDEBUG: 't' key blocked. is_typing={self.is_typing}, waiting_for_input={self.waiting_for_input}, time_since_typing={time_since_typing:.2f}s\033[0m")
             elif key == ord('c'):
                 # Only respond if NOT typing/TTS and NOT in input mode
                 time_since_typing = time.time() - self.last_typing_time
                 if not self.is_typing and not self.waiting_for_input and time_since_typing > 2.0:
                     # open context management dialog
-                    print(f"\033[93mDEBUG: 'c' key detected. Opening context management.\033[0m")
                     self.context_management_dialog()
-                elif key == ord('c'):
-                    # Debug: 'c' key pressed but blocked
-                    print(f"\033[93mDEBUG: 'c' key blocked. is_typing={self.is_typing}, waiting_for_input={self.waiting_for_input}, time_since_typing={time_since_typing:.2f}s\033[0m")
             elif key == ord('r'):
                 # Toggle recording with 'r' key (only when Chaplin window is focused)
                 if not self.is_typing and not self.waiting_for_input:
