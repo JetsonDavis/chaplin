@@ -9,6 +9,7 @@ import asyncio
 from elevenlabs import ElevenLabs, VoiceSettings
 import tempfile
 import pygame
+import numpy as np
 
 
 class ChaplinOutput(BaseModel):
@@ -17,12 +18,28 @@ class ChaplinOutput(BaseModel):
 
 
 class Chaplin:
-    def __init__(self, voice_sample_path=None, tts_speaker="Claribel Dervla", camera_index=0):
+    def __init__(self, voice_sample_path=None, tts_speaker="Claribel Dervla", camera_index=0, meeting_context=""):
         self.vsr_model = None
         self.camera_index = camera_index
 
         # flag to toggle recording
         self.recording = False
+        
+        # flag for manual TTS input mode
+        self.waiting_for_input = False
+        
+        # flag to track when we're typing (to prevent 't' key interference)
+        self.is_typing = False
+        self.last_typing_time = 0  # timestamp of last typing completion
+        
+        # conversation history for context
+        self.conversation_history = []  # stores recent corrected utterances
+        self.max_history_items = 5  # keep last 5 utterances for context
+        
+        # optional context that can be set by user
+        self.meeting_context = meeting_context  # e.g., "discussing quarterly sales figures"
+        if self.meeting_context:
+            print(f"\033[96mMeeting context set: {self.meeting_context}\033[0m")
 
         # thread stuff
         self.executor = ThreadPoolExecutor(max_workers=1)
@@ -48,6 +65,7 @@ class Chaplin:
         self.tts_speaker = tts_speaker if tts_speaker else "21m00Tcm4TlvDq8ikWAM"  # Rachel voice ID
         
         # initialize pygame mixer for audio playback
+        # Note: To route to Zoom, set your system default output to BlackHole or Multi-Output Device
         pygame.mixer.init()
         
         print(f"\033[48;5;22m\033[97m\033[1m TTS READY! \033[0m (voice: {self.tts_speaker})\n")
@@ -90,16 +108,49 @@ class Chaplin:
     def toggle_recording(self):
         # toggle recording when alt/option key is pressed
         self.recording = not self.recording
+    
+    def set_meeting_context(self, context):
+        """Update the meeting context for better LLM corrections"""
+        self.meeting_context = context
+        print(f"\n\033[96m📋 Meeting context updated: {context}\033[0m\n")
+    
+    def clear_conversation_history(self):
+        """Clear the conversation history"""
+        self.conversation_history = []
+        print("\n\033[96m🗑️  Conversation history cleared\033[0m\n")
 
     async def correct_output_async(self, output, sequence_num):
         # perform inference on the raw output to get back a "correct" version
         print("\n\033[48;5;94m\033[97m\033[1m CORRECTING WITH LLM... \033[0m")
+        
+        # Build context from conversation history
+        context_parts = []
+        if self.meeting_context:
+            context_parts.append(f"Meeting context: {self.meeting_context}")
+        
+        if self.conversation_history:
+            history_text = "\n".join([f"- {item}" for item in self.conversation_history[-3:]])  # last 3 items
+            context_parts.append(f"Recent conversation:\n{history_text}")
+        
+        context_section = "\n\n".join(context_parts) if context_parts else ""
+        
+        # Build system prompt with context
+        system_prompt = f"""You are an assistant that helps make corrections to the output of a lipreading model. The text you will receive was transcribed using a video-to-text system that attempts to lipread the subject speaking in the video, so the text will likely be imperfect. The input text will also be in all-caps, although your response should be capitalized correctly and should NOT be in all-caps.
+
+If something seems unusual, assume it was mistranscribed. Do your best to infer the words actually spoken, and make changes to the mistranscriptions in your response. Do not add more words or content, just change the ones that seem to be out of place (and, therefore, mistranscribed). Do not change even the wording of sentences, just individual words that look nonsensical in the context of all of the other words in the sentence.
+
+Also, add correct punctuation to the entire text. ALWAYS end each sentence with the appropriate sentence ending: '.', '?', or '!'.
+
+{context_section if context_section else "No prior context available."}
+
+Return the corrected text in the format of 'list_of_changes' and 'corrected_text'."""
+        
         response = await self.ollama_client.chat(
             model='qwen2.5:1.5b',
             messages=[
                 {
                     'role': 'system',
-                    'content': f"You are an assistant that helps make corrections to the output of a lipreading model. The text you will receive was transcribed using a video-to-text system that attempts to lipread the subject speaking in the video, so the text will likely be imperfect. The input text will also be in all-caps, although your respose should be capitalized correctly and should NOT be in all-caps.\n\nIf something seems unusual, assume it was mistranscribed. Do your best to infer the words actually spoken, and make changes to the mistranscriptions in your response. Do not add more words or content, just change the ones that seem to be out of place (and, therefore, mistranscribed). Do not change even the wording of sentences, just individual words that look nonsensical in the context of all of the other words in the sentence.\n\nAlso, add correct punctuation to the entire text. ALWAYS end each sentence with the appropriate sentence ending: '.', '?', or '!'. \n\nReturn the corrected text in the format of 'list_of_changes' and 'corrected_text'."
+                    'content': system_prompt
                 },
                 {
                     'role': 'user',
@@ -122,6 +173,11 @@ class Chaplin:
 
         # add space at the end
         chat_output.corrected_text += ' '
+        
+        # add to conversation history for future context
+        self.conversation_history.append(chat_output.corrected_text.strip())
+        if len(self.conversation_history) > self.max_history_items:
+            self.conversation_history.pop(0)  # remove oldest item
 
         # wait until it's this task's turn to type
         async with self.typing_condition:
@@ -129,13 +185,20 @@ class Chaplin:
                 await self.typing_condition.wait()
 
             # this task's turn to type the corrected text
-            print(f"\n\033[48;5;33m\033[97m\033[1m TYPING TEXT \033[0m: \"{chat_output.corrected_text.strip()}\"")
-            self.kbd_controller.type(chat_output.corrected_text)
-            print("\033[48;5;22m\033[97m\033[1m ✓ TYPING COMPLETE \033[0m")
-            
-            # speak the corrected text using TTS
-            print("\033[48;5;94m\033[97m\033[1m STARTING TTS... \033[0m")
-            self._speak_text(chat_output.corrected_text)
+            # Only type if we're not in manual input mode
+            if not self.waiting_for_input:
+                print(f"\n\033[48;5;33m\033[97m\033[1m TYPING TEXT \033[0m: \"{chat_output.corrected_text.strip()}\"")
+                self.is_typing = True  # Set flag before typing
+                self.kbd_controller.type(chat_output.corrected_text)
+                self.is_typing = False  # Clear flag after typing
+                self.last_typing_time = time.time()  # Record when typing finished
+                print("\033[48;5;22m\033[97m\033[1m ✓ TYPING COMPLETE \033[0m")
+                
+                # speak the corrected text using TTS
+                print("\033[48;5;94m\033[97m\033[1m STARTING TTS... \033[0m")
+                self._speak_text(chat_output.corrected_text)
+            else:
+                print("\033[93mSkipping typing/TTS - manual input mode active\033[0m")
 
             # increment sequence and notify next task
             self.next_sequence_to_type += 1
@@ -187,6 +250,108 @@ class Chaplin:
             os.remove(tmp_path)
         except Exception as e:
             print(f"\n\033[48;5;196m\033[97m\033[1m TTS ERROR \033[0m: {e}\n")
+
+    def manual_tts_input(self):
+        """Get text input using OpenCV window for manual TTS"""
+        # Set flag to prevent lip-reading from interfering
+        self.waiting_for_input = True
+        
+        # Temporarily disable recording if it's active
+        was_recording = self.recording
+        if was_recording:
+            self.recording = False
+            print("\033[93mPausing lip-reading recording for manual input...\033[0m")
+        
+        print("\n" + "="*60)
+        print("\033[48;5;33m\033[97m\033[1m MANUAL TTS INPUT MODE \033[0m")
+        print("Type in the 'TTS Input' window. Press Enter to speak, Esc to cancel.")
+        print("="*60)
+        
+        # Text input state
+        input_text = []
+        input_window = 'TTS Input'
+        
+        # Create input window
+        while True:
+            img = self._create_input_image(''.join(input_text))
+            cv2.imshow(input_window, img)
+            
+            key = cv2.waitKey(0)  # Wait indefinitely for key press
+            
+            if key == 27:  # Esc key
+                print("\033[93mInput cancelled.\033[0m\n")
+                cv2.destroyWindow(input_window)
+                break
+            elif key == 13 or key == 10:  # Enter key (13 on Windows, 10 on Mac/Linux)
+                text = ''.join(input_text)
+                cv2.destroyWindow(input_window)
+                
+                if text.strip():
+                    print(f"\n\033[48;5;33m\033[97m\033[1m SPEAKING \033[0m: \"{text.strip()}\"")
+                    # Speak the text directly without typing
+                    self._speak_text(text.strip())
+                else:
+                    print("\033[93mNo text entered.\033[0m\n")
+                break
+            elif key == 8 or key == 127:  # Backspace (8 on Windows, 127 on Mac/Linux)
+                if input_text:
+                    input_text.pop()
+            elif 32 <= key <= 126:  # Printable ASCII characters
+                input_text.append(chr(key))
+        
+        # Restore recording state if it was active
+        if was_recording:
+            self.recording = True
+            print("\033[93mResuming lip-reading recording...\033[0m")
+        
+        # Clear the flag
+        self.waiting_for_input = False
+    
+    def _create_input_image(self, text):
+        """Create an image showing the current input text"""
+        img = 255 * np.ones((250, 700, 3), dtype=np.uint8)
+        
+        # Add title
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(img, 'Manual TTS Input', (20, 40), font, 1.2, (0, 0, 0), 2)
+        
+        # Add instructions
+        cv2.putText(img, 'Type your text below:', (20, 80), font, 0.6, (100, 100, 100), 1)
+        cv2.putText(img, 'Press Enter to speak | Esc to cancel', (20, 230), font, 0.5, (150, 150, 150), 1)
+        
+        # Draw input box
+        cv2.rectangle(img, (20, 100), (680, 200), (200, 200, 200), 2)
+        
+        # Add text with word wrapping
+        if text:
+            # Simple word wrapping
+            max_width = 640
+            y_pos = 135
+            words = text.split(' ')
+            current_line = ''
+            
+            for word in words:
+                test_line = current_line + word + ' '
+                text_size = cv2.getTextSize(test_line, font, 0.7, 1)[0]
+                
+                if text_size[0] > max_width:
+                    # Draw current line and start new one
+                    if current_line:
+                        cv2.putText(img, current_line.strip(), (30, y_pos), font, 0.7, (0, 0, 0), 1)
+                        y_pos += 30
+                        current_line = word + ' '
+                else:
+                    current_line = test_line
+            
+            # Draw remaining text
+            if current_line:
+                cv2.putText(img, current_line.strip(), (30, y_pos), font, 0.7, (0, 0, 0), 1)
+        
+        # Add cursor
+        cursor_x = 30 + cv2.getTextSize(text, font, 0.7, 1)[0][0] if text else 30
+        cv2.line(img, (cursor_x, 120), (cursor_x, 180), (0, 0, 255), 2)
+        
+        return img
 
     def perform_inference(self, video_path):
         # perform inference on the video with the vsr model
@@ -241,6 +406,16 @@ class Chaplin:
                     if file.startswith(self.output_prefix) and (file.endswith('.mp4') or file.endswith('.avi')):
                         os.remove(file)
                 break
+            elif key == ord('t'):
+                # Check if enough time has passed since last typing (0.5 second buffer)
+                time_since_typing = time.time() - self.last_typing_time
+                if not self.is_typing and not self.waiting_for_input and time_since_typing > 0.5:
+                    # open manual TTS input dialog
+                    print(f"\033[93mDEBUG: 't' key detected. Opening TTS input.\033[0m")
+                    self.manual_tts_input()
+                else:
+                    # Debug: 't' key pressed but blocked
+                    print(f"\033[93mDEBUG: 't' key blocked. is_typing={self.is_typing}, waiting_for_input={self.waiting_for_input}, time_since_typing={time_since_typing:.2f}s\033[0m")
 
             current_time = time.time()
 
